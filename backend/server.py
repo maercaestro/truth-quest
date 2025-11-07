@@ -4,6 +4,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from openai import OpenAI
 import yt_dlp
+import requests
 import re
 import os
 from dotenv import load_dotenv
@@ -20,6 +21,9 @@ youtube_api = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY) if YOUTUBE_AP
 # OpenAI configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+# Brave Search API configuration
+BRAVE_API_KEY = os.getenv('BRAVE_API_KEY')
 
 def extract_video_id(url):
     """Extract video ID from various YouTube URL formats"""
@@ -310,13 +314,12 @@ Return a JSON array where each fact has:
 
         # Call GPT API
         response = openai_client.chat.completions.create(
-            model="gpt-4o",  # or "gpt-4-turbo" or "gpt-3.5-turbo" for testing
+            model="gpt-5-mini",  
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
+            response_format={"type": "json_object"}
         )
         
         # Parse the response
@@ -345,6 +348,155 @@ Return a JSON array where each fact has:
         traceback.print_exc()
         return jsonify({
             'error': 'Failed to extract facts',
+            'details': str(e)
+        }), 500
+
+def search_brave(query, count=5):
+    """Search using Brave Search API"""
+    if not BRAVE_API_KEY:
+        raise Exception('Brave API key not configured')
+    
+    url = 'https://api.search.brave.com/res/v1/web/search'
+    headers = {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': BRAVE_API_KEY
+    }
+    params = {
+        'q': query,
+        'count': count
+    }
+    
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    
+    return response.json()
+
+@app.route('/api/verify-facts', methods=['POST'])
+def verify_facts():
+    """Verify facts using Brave Search and GPT analysis"""
+    try:
+        if not openai_client:
+            return jsonify({'error': 'OpenAI API key not configured'}), 500
+        
+        if not BRAVE_API_KEY:
+            return jsonify({'error': 'Brave Search API key not configured'}), 500
+        
+        data = request.get_json()
+        facts = data.get('facts', [])
+        
+        if not facts:
+            return jsonify({'error': 'No facts provided for verification'}), 400
+        
+        print(f'Verifying {len(facts)} facts...')
+        
+        verified_facts = []
+        
+        for idx, fact in enumerate(facts):
+            print(f'Verifying fact {idx + 1}/{len(facts)}: {fact.get("claim", "")[:50]}...')
+            
+            try:
+                # Build search query from claim and entities
+                claim = fact.get('claim', '')
+                entities = fact.get('entities', [])
+                search_query = f"{claim} {' '.join(entities[:3])}"  # Use claim + top 3 entities
+                
+                # Search Brave
+                search_results = search_brave(search_query, count=5)
+                
+                # Extract relevant info from search results
+                sources = []
+                for result in search_results.get('web', {}).get('results', [])[:5]:
+                    sources.append({
+                        'title': result.get('title', ''),
+                        'url': result.get('url', ''),
+                        'description': result.get('description', '')
+                    })
+                
+                # Use GPT to analyze if search results support or refute the claim
+                verification_prompt = f"""You are a fact-checker. Analyze if the following search results support or refute this claim.
+
+CLAIM: {claim}
+
+SEARCH RESULTS:
+{chr(10).join([f"{i+1}. {s['title']}: {s['description']}" for i, s in enumerate(sources)])}
+
+Analyze the search results and determine:
+1. verdict: "supported", "refuted", "partially_true", "unverified", or "inconclusive"
+2. confidence: 0-100 (how confident are you in this verdict)
+3. reasoning: brief explanation of your analysis
+4. relevant_sources: indices of most relevant search results (0-based array)
+
+Return as JSON with these exact fields."""
+
+                verification_response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are a fact-checking expert who analyzes search results objectively."},
+                        {"role": "user", "content": verification_prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                
+                import json
+                verification_result = json.loads(verification_response.choices[0].message.content)
+                
+                # Combine fact with verification result
+                verified_fact = {
+                    **fact,
+                    'verification': {
+                        'verdict': verification_result.get('verdict', 'inconclusive'),
+                        'confidence': verification_result.get('confidence', 0),
+                        'reasoning': verification_result.get('reasoning', ''),
+                        'sources': [sources[i] for i in verification_result.get('relevant_sources', []) if i < len(sources)]
+                    },
+                    'searchQuery': search_query
+                }
+                
+                verified_facts.append(verified_fact)
+                print(f'✓ Verified: {verification_result.get("verdict")} ({verification_result.get("confidence")}% confidence)')
+                
+            except Exception as e:
+                print(f'✗ Error verifying fact: {str(e)}')
+                verified_facts.append({
+                    **fact,
+                    'verification': {
+                        'verdict': 'error',
+                        'confidence': 0,
+                        'reasoning': f'Error during verification: {str(e)}',
+                        'sources': []
+                    }
+                })
+        
+        # Calculate overall score
+        total_facts = len(verified_facts)
+        supported = sum(1 for f in verified_facts if f.get('verification', {}).get('verdict') == 'supported')
+        refuted = sum(1 for f in verified_facts if f.get('verification', {}).get('verdict') == 'refuted')
+        partially_true = sum(1 for f in verified_facts if f.get('verification', {}).get('verdict') == 'partially_true')
+        
+        # Score calculation (supported: 100%, partially: 50%, refuted: 0%)
+        score = ((supported * 100) + (partially_true * 50)) / total_facts if total_facts > 0 else 0
+        
+        print(f'✓ Verification complete. Score: {score:.1f}/100')
+        
+        return jsonify({
+            'success': True,
+            'verifiedFacts': verified_facts,
+            'summary': {
+                'totalFacts': total_facts,
+                'supported': supported,
+                'refuted': refuted,
+                'partiallyTrue': partially_true,
+                'score': round(score, 1)
+            }
+        })
+        
+    except Exception as e:
+        print(f'Error verifying facts: {str(e)}')
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Failed to verify facts',
             'details': str(e)
         }), 500
 
