@@ -1,0 +1,6 @@
+Flask==3.0.0
+flask-cors==4.0.0
+yt-dlp==2025.10.22
+google-api-python-client==2.187.0
+openai==2.7.1
+python-dotenv==1.0.0
