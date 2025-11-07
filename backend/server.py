@@ -73,6 +73,7 @@ def fetch_transcript_whisper(video_id):
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
             ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
         
         # Check file size (Whisper has 25MB limit)
@@ -119,7 +120,11 @@ def fetch_transcript_whisper(video_id):
             'full': full_text,
             'segments': segments,
             'method': 'whisper',
-            'language': transcript_response.language
+            'language': transcript_response.language,
+            'title': info.get('title', 'Unknown Title'),
+            'uploader': info.get('uploader', 'Unknown Uploader'),
+            'duration': info.get('duration', 0),
+            'view_count': info.get('view_count', 0)
         }
         
     finally:
@@ -313,7 +318,11 @@ def fetch_transcript_ytdlp(video_id):
         return {
             'full': full_text,
             'segments': segments,
-            'method': 'yt-dlp'
+            'method': 'yt-dlp',
+            'title': info.get('title', 'Unknown Title'),
+            'uploader': info.get('uploader', 'Unknown Uploader'),
+            'duration': info.get('duration', 0),
+            'view_count': info.get('view_count', 0)
         }
 
 @app.route('/api/transcription', methods=['POST'])
@@ -847,6 +856,7 @@ def analyze_video():
         
         data = request.get_json()
         youtube_url = data.get('youtubeUrl')
+        check_mode = data.get('checkMode', 'sample')  # 'sample' or 'full'
         
         if not youtube_url:
             return jsonify({'error': 'YouTube URL is required'}), 400
@@ -857,7 +867,7 @@ def analyze_video():
             return jsonify({'error': 'Invalid YouTube URL'}), 400
         
         print(f'\n{"="*60}')
-        print(f'ANALYZING VIDEO: {video_id}')
+        print(f'ANALYZING VIDEO: {video_id} (Mode: {check_mode})')
         print(f'{"="*60}')
         
         # Step 2: Get transcript
@@ -927,8 +937,17 @@ Return ONLY facts that can be verified through web search. Ignore opinions and p
         all_facts = json.loads(response.choices[0].message.content).get('facts', [])
         print(f'✓ Extracted {len(all_facts)} total facts')
         
-        # Step 4: Smart sampling - select 5-7 representative facts
-        sample_size = min(7, len(all_facts))
+        # Step 4: Smart sampling - select facts based on mode
+        if check_mode == 'full':
+            # Full check - verify ALL facts
+            sampled_facts = all_facts
+            print(f'\n[3/4] Full check mode - verifying ALL {len(sampled_facts)} facts...')
+        else:
+            # Sample check - select 5-7 representative facts
+            sample_size = min(7, len(all_facts))
+            sampled_facts = random.sample(all_facts, sample_size) if len(all_facts) > sample_size else all_facts
+            print(f'\n[3/4] Sample check mode - verifying {len(sampled_facts)} facts...')
+        
         if len(all_facts) == 0:
             return jsonify({
                 'success': True,
@@ -937,14 +956,12 @@ Return ONLY facts that can be verified through web search. Ignore opinions and p
                 'gradeColor': 'gray',
                 'totalFacts': 0,
                 'sampledFacts': 0,
-                'verifiedFacts': []
+                'verifiedFacts': [],
+                'checkMode': check_mode
             })
         
-        sampled_facts = random.sample(all_facts, sample_size) if len(all_facts) > sample_size else all_facts
-        print(f'\n[3/4] Sampling {len(sampled_facts)} facts for verification...')
-        
         # Step 5: Verify sampled facts
-        print('\n[4/4] Verifying sampled facts...')
+        print('\n[4/4] Verifying facts...')
         verified_facts = []
         
         for i, fact in enumerate(sampled_facts, 1):
@@ -1042,6 +1059,10 @@ Verdict (supported/refuted/partially_true):"""
         return jsonify({
             'success': True,
             'videoId': video_id,
+            'videoTitle': transcript.get('title', 'Unknown Title'),
+            'videoUploader': transcript.get('uploader', 'Unknown Uploader'),
+            'videoDuration': transcript.get('duration', 0),
+            'videoViewCount': transcript.get('view_count', 0),
             'grade': grade,
             'gradeDescription': description,
             'gradeColor': color,
@@ -1049,6 +1070,7 @@ Verdict (supported/refuted/partially_true):"""
             'totalFacts': len(all_facts),
             'sampledFacts': len(sampled_facts),
             'verifiedFacts': verified_facts,
+            'checkMode': check_mode,
             'summary': {
                 'supported': supported,
                 'refuted': refuted,
