@@ -47,8 +47,12 @@ jobs:
       env:
         SSH_KEY: ${{ secrets.AZURE_VM_SSH_KEY }}
         VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+        VM_USER: ${{ secrets.AZURE_VM_USERNAME }}
       run: |
         echo "🔑 Setting up SSH connection..."
+        echo "VM Host: $VM_HOST"
+        echo "VM User: $VM_USER"
+        
         mkdir -p ~/.ssh
         echo "$SSH_KEY" > ~/.ssh/azure_key
         chmod 600 ~/.ssh/azure_key
@@ -59,7 +63,7 @@ jobs:
         echo "✅ Known hosts updated"
         
         echo "🧪 Testing SSH connection..."
-        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no ${{ secrets.AZURE_VM_USERNAME }}@$VM_HOST "echo '✅ SSH connection successful'"
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST "echo '✅ SSH connection successful'"
     
     - name: Pull Latest Code
       env:
