@@ -1,0 +1,64 @@
+name: Deploy to Azure VM
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Create .env file
+      run: |
+        cat > backend/.env << EOF
+        OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        BRAVE_API_KEY=${{ secrets.BRAVE_API_KEY }}
+        YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
+        PORT=3001
+        GOOGLE_APPLICATION_CREDENTIALS=./serviceAccountKey.json
+        EOF
+    
+    - name: Deploy to Azure VM
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.AZURE_VM_HOST }}
+        username: ${{ secrets.AZURE_VM_USERNAME }}
+        key: ${{ secrets.AZURE_VM_SSH_KEY }}
+        script: |
+          cd /home/azureuser/truth-quest
+          
+          echo "📥 Pulling latest code..."
+          git pull origin main
+          
+          echo "🔧 Setting up backend..."
+          cd backend
+          
+          # Create .env with secrets
+          cat > .env << EOF
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          BRAVE_API_KEY=${{ secrets.BRAVE_API_KEY }}
+          YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
+          PORT=3001
+          GOOGLE_APPLICATION_CREDENTIALS=./serviceAccountKey.json
+          EOF
+          
+          source venv/bin/activate
+          pip install -r requirements.txt --quiet
+          
+          echo "🔧 Setting up frontend..."
+          cd ../frontend
+          npm install --silent
+          npm run build
+          
+          echo "🔄 Restarting services..."
+          sudo systemctl restart truth-quest-backend
+          sudo systemctl restart nginx
+          
+          echo "✅ Deployment complete!"
+          echo "Backend: http://${{ secrets.AZURE_VM_HOST }}:3001"
+          echo "Frontend: http://${{ secrets.AZURE_VM_HOST }}"

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { Search, Shield, CheckCircle, AlertTriangle, XCircle, Loader2, Youtube, Sparkles, LogOut, User, Smile, Heart, Star, Zap, Crown, Flame, Lock, Coffee } from 'lucide-react'
 import { useAuth } from './contexts/AuthContext'
 import AuthModal from './components/AuthModal'
+import { API_URL } from './config'
 import './App.css'
 
 // CONFIGURATION - Easy to change for testing/production
@@ -116,7 +117,7 @@ function App() {
         }
       }, 500)
 
-      const response = await fetch('http://localhost:3001/api/analyze', {
+      const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
