@@ -2,25 +2,47 @@
 
 ## First Time Setup (On Azure VM)
 
+### Option A: Upload and run setup script
+```bash
+# 1. From your LOCAL machine, upload the script
+scp deploy/azure_vm_setup.sh azureuser@YOUR_VM_IP:~/
+
+# 2. SSH into VM
+ssh azureuser@YOUR_VM_IP
+
+# 3. Run the script
+chmod +x azure_vm_setup.sh
+./azure_vm_setup.sh
+
+# 4. Upload Firebase key (from your local machine in another terminal)
+scp backend/serviceAccountKey.json azureuser@YOUR_VM_IP:/home/azureuser/truth-quest/backend/
+```
+
+### Option B: Download setup script from GitHub
 ```bash
 # 1. SSH into your VM
 ssh azureuser@YOUR_VM_IP
 
 # 2. Download and run setup script
-curl -o setup.sh https://raw.githubusercontent.com/maercaestro/truth-quest/main/deploy/azure_vm_setup.sh
+curl -o setup.sh https://raw.githubusercontent.com/maercaestro/ahead/main/deploy/azure_vm_setup.sh
 chmod +x setup.sh
 ./setup.sh
 
-# 3. Add your environment variables
-nano /home/azureuser/truth-quest/backend/.env
-
-# 4. Upload Firebase key (from your local machine)
+# 3. Upload Firebase key (from your local machine in another terminal)
 scp backend/serviceAccountKey.json azureuser@YOUR_VM_IP:/home/azureuser/truth-quest/backend/
-
-# 5. Restart services
-sudo systemctl restart truth-quest-backend
-sudo systemctl restart nginx
 ```
+
+**Important:** The setup script will:
+- Install system dependencies (Python, Node.js, nginx, etc.)
+- Clone the repository
+- Create Python virtual environment
+- Set up systemd service
+- Configure nginx
+- Open firewall ports
+
+**After setup completes:**
+- CI/CD will handle .env file creation automatically (no need to manually create it)
+- Just add GitHub Secrets (see below) and push to main branch
 
 ## GitHub Secrets to Add
 
