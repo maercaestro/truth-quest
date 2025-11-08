@@ -53,6 +53,25 @@ jobs:
         echo "VM Host: $VM_HOST"
         echo "VM User: $VM_USER"
         
+        # Check if secrets are set
+        if [ -z "$VM_HOST" ]; then
+          echo "❌ ERROR: AZURE_VM_HOST secret is not set!"
+          exit 1
+        fi
+        
+        if [ -z "$VM_USER" ]; then
+          echo "❌ ERROR: AZURE_VM_USERNAME secret is not set!"
+          echo "Please add it in: GitHub Repo → Settings → Secrets and variables → Actions"
+          echo "Secret name: AZURE_VM_USERNAME"
+          echo "Secret value: azureuser (or your VM username)"
+          exit 1
+        fi
+        
+        if [ -z "$SSH_KEY" ]; then
+          echo "❌ ERROR: AZURE_VM_SSH_KEY secret is not set!"
+          exit 1
+        fi
+        
         mkdir -p ~/.ssh
         echo "$SSH_KEY" > ~/.ssh/azure_key
         chmod 600 ~/.ssh/azure_key

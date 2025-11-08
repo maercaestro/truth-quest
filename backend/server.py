@@ -17,7 +17,23 @@ from datetime import datetime, timedelta
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+
+# Configure CORS for multiple origins
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:5173",  # Local Vite dev server
+            "http://localhost:3000",  # Alternative local dev
+            "https://truth-quest.web.app",  # Firebase Hosting
+            "https://truth-quest.firebaseapp.com",  # Firebase Hosting alternate
+            "https://*.web.app",  # Any Firebase preview channels
+            "https://*.firebaseapp.com"  # Any Firebase preview channels
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # Initialize Firebase Admin SDK
 try:

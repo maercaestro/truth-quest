@@ -1,0 +1,63 @@
+name: Deploy Frontend to Firebase
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-firebase.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-frontend:
+    name: Deploy to Firebase Hosting
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Create .env file
+      env:
+        AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+      run: |
+        cd frontend
+        echo "VITE_API_URL=http://$AZURE_VM_HOST:3001" > .env.production
+        echo "✅ Environment file created"
+        echo "API URL: http://$AZURE_VM_HOST:3001"
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+        echo "✅ Build complete"
+        ls -la dist/
+    
+    - name: Deploy to Firebase Hosting
+      uses: FirebaseExtended/action-hosting-deploy@v0
+      with:
+        repoToken: ${{ secrets.GITHUB_TOKEN }}
+        firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        channelId: live
+        projectId: truth-quest
+        entryPoint: ./frontend
+      
+    - name: Deployment Complete
+      run: |
+        echo "✅ Frontend Deployed Successfully!"
+        echo "================================"
+        echo "Frontend URL: https://truth-quest.web.app"
+        echo "Backend API: http://${{ secrets.AZURE_VM_HOST }}:3001"
+        echo "================================"
