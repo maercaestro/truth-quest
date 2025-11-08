@@ -23,9 +23,9 @@ echo "📦 Installing system dependencies..."
 sudo apt update
 sudo apt install -y python3-pip python3-venv nginx git curl
 
-# Install Node.js 18.x
-echo "📦 Installing Node.js..."
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+# Install Node.js 20.x LTS
+echo "📦 Installing Node.js 20.x LTS..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
 echo "✅ System dependencies installed!"
