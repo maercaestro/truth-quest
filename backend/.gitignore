@@ -6,3 +6,8 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# Firebase credentials
+*serviceAccountKey*.json
+serviceAccount*.json
+firebase-credentials.json

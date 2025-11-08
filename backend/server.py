@@ -9,11 +9,25 @@ import re
 import os
 import tempfile
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
+from functools import wraps
+from datetime import datetime, timedelta
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# Initialize Firebase Admin SDK
+try:
+    firebase_admin.initialize_app()
+    db = firestore.client()
+    print("Firebase Admin SDK initialized successfully")
+except Exception as e:
+    print(f"Firebase Admin SDK initialization error: {e}")
+    print("Make sure GOOGLE_APPLICATION_CREDENTIALS environment variable is set")
+    db = None
 
 # YouTube API configuration
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
@@ -28,6 +42,233 @@ BRAVE_API_KEY = os.getenv('BRAVE_API_KEY')
 
 # FFmpeg path
 FFMPEG_PATH = '/opt/homebrew/bin/ffmpeg'
+
+# Usage limits
+DAILY_LIMIT = 10  # 10 analyses per day for free users
+MONTHLY_LIMIT = 100  # 100 analyses per month for free users
+
+def check_usage_limits(user_uid):
+    """Check if user has exceeded their usage limits"""
+    if not db:
+        return True, "Database not available"
+    
+    try:
+        # Get user's usage document
+        user_ref = db.collection('usage').document(user_uid)
+        user_doc = user_ref.get()
+        
+        now = datetime.utcnow()
+        today = now.date()
+        current_month = f"{now.year}-{now.month:02d}"
+        
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            
+            # Check daily limit
+            last_used_date = data.get('last_used_date', '')
+            daily_count = data.get('daily_count', 0)
+            
+            if last_used_date == str(today):
+                if daily_count >= DAILY_LIMIT:
+                    return False, f"Daily limit of {DAILY_LIMIT} analyses reached. Try again tomorrow."
+            
+            # Check monthly limit
+            current_month_data = data.get('current_month', '')
+            monthly_count = data.get('monthly_count', 0)
+            
+            if current_month_data == current_month:
+                if monthly_count >= MONTHLY_LIMIT:
+                    return False, f"Monthly limit of {MONTHLY_LIMIT} analyses reached. Limit resets next month."
+        
+        return True, None
+    except Exception as e:
+        print(f"Usage check error: {e}")
+        return True, None  # Allow on error
+
+def increment_usage(user_uid):
+    """Increment user's usage count"""
+    if not db:
+        return
+    
+    try:
+        user_ref = db.collection('usage').document(user_uid)
+        user_doc = user_ref.get()
+        
+        now = datetime.utcnow()
+        today = str(now.date())
+        current_month = f"{now.year}-{now.month:02d}"
+        
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            
+            # Update daily count
+            if data.get('last_used_date') == today:
+                daily_count = data.get('daily_count', 0) + 1
+            else:
+                daily_count = 1
+            
+            # Update monthly count
+            if data.get('current_month') == current_month:
+                monthly_count = data.get('monthly_count', 0) + 1
+            else:
+                monthly_count = 1
+            
+            user_ref.update({
+                'last_used_date': today,
+                'daily_count': daily_count,
+                'current_month': current_month,
+                'monthly_count': monthly_count,
+                'last_used_at': firestore.SERVER_TIMESTAMP
+            })
+        else:
+            # Create new usage document
+            user_ref.set({
+                'last_used_date': today,
+                'daily_count': 1,
+                'current_month': current_month,
+                'monthly_count': 1,
+                'created_at': firestore.SERVER_TIMESTAMP,
+                'last_used_at': firestore.SERVER_TIMESTAMP
+            })
+    except Exception as e:
+        print(f"Usage increment error: {e}")
+
+def verify_token(f):
+    """Decorator to verify Firebase ID token and check usage limits"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing or invalid authorization header'}), 401
+        
+        id_token = auth_header.split('Bearer ')[1]
+        
+        try:
+            # Verify the token
+            decoded_token = auth.verify_id_token(id_token)
+            user_uid = decoded_token['uid']
+            
+            # Check usage limits
+            allowed, error_message = check_usage_limits(user_uid)
+            if not allowed:
+                return jsonify({'error': error_message, 'limit_exceeded': True}), 429
+            
+            # Add user info to request
+            request.user = {
+                'uid': user_uid,
+                'email': decoded_token.get('email'),
+                'email_verified': decoded_token.get('email_verified', False)
+            }
+            
+            return f(*args, **kwargs)
+        except Exception as e:
+            print(f"Token verification error: {e}")
+            return jsonify({'error': 'Invalid or expired token', 'details': str(e)}), 401
+    
+    return decorated_function
+
+def fetch_transcript_youtube_oauth(video_id, oauth_token):
+    """
+    METHOD 1: Fetch transcript using user's YouTube OAuth token
+    This allows access to captions that require authentication
+    """
+    print(f'\n🎬 === YouTube OAuth Method ===')
+    
+    if not oauth_token:
+        print(f'  ❌ No OAuth token provided, skipping...')
+        return None
+    
+    if oauth_token == 'null' or oauth_token == 'undefined':
+        print(f'  ❌ Invalid OAuth token value: {oauth_token}')
+        return None
+        
+    try:
+        from google.oauth2.credentials import Credentials
+        
+        print(f'  🔑 Token available, attempting OAuth...')
+        print(f'  📹 Video ID: {video_id}')
+        
+        # Create credentials from OAuth token
+        credentials = Credentials(token=oauth_token)
+        print(f'  ✅ Credentials object created')
+        
+        # Build YouTube API client with user credentials
+        youtube_oauth = build('youtube', 'v3', credentials=credentials)
+        print(f'  ✅ YouTube API client built with OAuth')
+        
+        # List available captions
+        print(f'  📋 Fetching caption list...')
+        captions_response = youtube_oauth.captions().list(
+            part='snippet',
+            videoId=video_id
+        ).execute()
+        
+        if not captions_response.get('items'):
+            print('  ⚠️ No captions available via OAuth')
+            return None
+        
+        print(f'  ✅ Found {len(captions_response["items"])} caption tracks')
+        
+        # Find English caption or first available
+        caption_track = None
+        for item in captions_response['items']:
+            if item['snippet']['language'] == 'en':
+                caption_track = item
+                break
+        if not caption_track:
+            caption_track = captions_response['items'][0]
+        
+        caption_id = caption_track['id']
+        print(f'  📝 Found caption track: {caption_track["snippet"]["language"]}')
+        
+        # Download caption content
+        caption_content = youtube_oauth.captions().download(
+            id=caption_id,
+            tfmt='srt'
+        ).execute()
+        
+        # Parse SRT format
+        import re
+        # Remove timing lines and sequence numbers
+        text = re.sub(r'\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', caption_content.decode('utf-8'))
+        text = re.sub(r'\d+\n', '', text)
+        text = ' '.join(text.split('\n'))
+        
+        # Get video metadata
+        video_response = youtube_oauth.videos().list(
+            part='snippet,contentDetails,statistics',
+            id=video_id
+        ).execute()
+        
+        if video_response.get('items'):
+            video_info = video_response['items'][0]
+            metadata = {
+                'title': video_info['snippet']['title'],
+                'uploader': video_info['snippet']['channelTitle'],
+                'duration': parse_duration(video_info['contentDetails']['duration']),
+                'view_count': int(video_info['statistics'].get('viewCount', 0))
+            }
+        else:
+            metadata = {}
+        
+        print(f'  ✅ YouTube OAuth transcript fetched: {len(text)} chars')
+        return {'text': text, **metadata}
+        
+    except Exception as e:
+        print(f'  ❌ YouTube OAuth failed: {str(e)}')
+        return None
+
+def parse_duration(duration_str):
+    """Parse ISO 8601 duration to seconds"""
+    import re
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if match:
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2) or 0)
+        seconds = int(match.group(3) or 0)
+        return hours * 3600 + minutes * 60 + seconds
+    return 0
 
 def extract_video_id(url):
     """Extract video ID from various YouTube URL formats"""
@@ -522,7 +763,7 @@ Return JSON with a "facts" array where each fact has:
 - "verifiable": boolean"""
 
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -612,7 +853,7 @@ Return JSON with:
 - relevant_sources: indices array (0-based)"""
 
         verification_response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": "You are a fact-checker. Be concise."},
                 {"role": "user", "content": verification_prompt}
@@ -778,7 +1019,7 @@ Analyze the search results and determine:
 Return as JSON with these exact fields."""
 
                 verification_response = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-5-mini",
                     messages=[
                         {"role": "system", "content": "You are a fact-checking expert who analyzes search results objectively."},
                         {"role": "user", "content": verification_prompt}
@@ -849,10 +1090,16 @@ Return as JSON with these exact fields."""
         }), 500
 
 @app.route('/api/analyze', methods=['POST'])
+@verify_token
 def analyze_video():
     """Fast video analysis: transcript → extract facts → sample & verify → grade"""
     try:
         import random
+        
+        # Get authenticated user info
+        user_uid = request.user['uid']
+        user_email = request.user.get('email', 'anonymous')
+        print(f'Authenticated user: {user_email} ({user_uid})')
         
         data = request.get_json()
         youtube_url = data.get('youtubeUrl')
@@ -870,25 +1117,37 @@ def analyze_video():
         print(f'ANALYZING VIDEO: {video_id} (Mode: {check_mode})')
         print(f'{"="*60}')
         
-        # Step 2: Get transcript
-        print('\n[1/4] Fetching transcript...')
+        # Step 2: Get transcript (2-tier system: yt-dlp → Whisper)
+        print('\n[1/5] Fetching transcript...')
         transcript = None
+        transcript_method = None
+        
+        # METHOD 1: Try yt-dlp
         try:
             transcript = fetch_transcript_ytdlp(video_id)
+            transcript_method = 'yt-dlp'
             print(f'✓ Transcript fetched via yt-dlp ({len(transcript["full"])} chars)')
         except Exception as e:
             print(f'✗ yt-dlp failed: {str(e)}')
-            if openai_client:
-                try:
-                    transcript = fetch_transcript_whisper(video_id)
-                    print(f'✓ Transcript fetched via Whisper ({len(transcript["full"])} chars)')
-                except Exception as e2:
-                    return jsonify({'error': f'Failed to get transcript: {str(e2)}'}), 500
-            else:
-                return jsonify({'error': f'Failed to get transcript: {str(e)}'}), 500
+        
+        # METHOD 2: Fall back to Whisper if yt-dlp failed
+        if not transcript and openai_client:
+            try:
+                transcript = fetch_transcript_whisper(video_id)
+                transcript_method = 'OpenAI Whisper'
+                print(f'✓ Transcript fetched via Whisper ({len(transcript["full"])} chars)')
+            except Exception as e:
+                print(f'✗ Whisper failed: {str(e)}')
+                return jsonify({'error': f'All transcription methods failed. Last error: {str(e)}'}), 500
+        
+        if not transcript:
+            return jsonify({'error': 'Could not fetch transcript from any source'}), 500
+        
+        # Normalize transcript format (use 'full' key for consistency)
+        transcript_text = transcript.get('full', '')
         
         # Step 3: Extract ALL facts at once (no chunking)
-        print('\n[2/4] Extracting facts from transcript...')
+        print(f'\n[2/5] Extracting facts from transcript... (Method: {transcript_method})')
         
         system_prompt = """Extract verifiable factual claims from this transcript. Focus on:
 - Specific numbers, statistics, dates
@@ -899,10 +1158,10 @@ def analyze_video():
 
 Return ONLY facts that can be verified through web search. Ignore opinions and predictions."""
 
-        user_prompt = f"Extract all verifiable facts from this transcript:\n\n{transcript['full']}"
+        user_prompt = f"Extract all verifiable facts from this transcript:\n\n{transcript_text}"
         
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -937,16 +1196,98 @@ Return ONLY facts that can be verified through web search. Ignore opinions and p
         all_facts = json.loads(response.choices[0].message.content).get('facts', [])
         print(f'✓ Extracted {len(all_facts)} total facts')
         
+        # Step 3.5: Extract and verify central thesis
+        print('\n[3/5] Extracting central thesis...')
+        
+        thesis_prompt = """Analyze this video transcript and identify THE ONE central claim or main thesis.
+This should be the primary argument or key message the video is trying to convey.
+Return only the single most important claim that represents the video's core message."""
+
+        thesis_response = openai_client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": thesis_prompt},
+                {"role": "user", "content": f"Transcript:\n\n{transcript_text[:8000]}"}
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "thesis_extraction",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "thesis": {"type": "string"},
+                            "importance": {"type": "string"}
+                        },
+                        "required": ["thesis", "importance"]
+                    }
+                }
+            }
+        )
+        
+        thesis_data = json.loads(thesis_response.choices[0].message.content)
+        central_thesis = thesis_data.get('thesis', '')
+        print(f'✓ Central thesis: {central_thesis[:100]}...')
+        
+        # Verify the central thesis
+        print('  Verifying central thesis...')
+        thesis_search_query = f'{central_thesis[:200]}'
+        thesis_search_results = search_brave(thesis_search_query, count=5)
+        thesis_web_results = thesis_search_results.get('web', {}).get('results', [])[:3]
+        thesis_sources = [{'title': r.get('title', '')[:150], 'url': r.get('url', '')} for r in thesis_web_results]
+        
+        thesis_analysis_prompt = f"""Claim: "{central_thesis}"
+
+Search Results:
+{chr(10).join([f"- {s['title']}" for s in thesis_sources])}
+
+Verdict (supported/refuted/partially_true):"""
+
+        thesis_analysis = openai_client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[{"role": "user", "content": thesis_analysis_prompt}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "verification",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "verdict": {"type": "string", "enum": ["supported", "refuted", "partially_true"]},
+                            "reasoning": {"type": "string"}
+                        },
+                        "required": ["verdict", "reasoning"]
+                    }
+                }
+            }
+        )
+        
+        thesis_result = json.loads(thesis_analysis.choices[0].message.content)
+        thesis_verdict = thesis_result['verdict']
+        print(f'  ✓ Thesis verdict: {thesis_verdict}')
+        
+        # Store thesis verification
+        thesis_verification = {
+            'claim': central_thesis,
+            'category': 'Central Thesis',
+            'entities': [],
+            'verification': {
+                'verdict': thesis_verdict,
+                'reasoning': thesis_result['reasoning'][:200],
+                'sources': thesis_sources
+            }
+        }
+        
         # Step 4: Smart sampling - select facts based on mode
         if check_mode == 'full':
             # Full check - verify ALL facts
             sampled_facts = all_facts
-            print(f'\n[3/4] Full check mode - verifying ALL {len(sampled_facts)} facts...')
+            print(f'\n[4/5] Full check mode - verifying ALL {len(sampled_facts)} facts...')
         else:
             # Sample check - select 5-7 representative facts
             sample_size = min(7, len(all_facts))
             sampled_facts = random.sample(all_facts, sample_size) if len(all_facts) > sample_size else all_facts
-            print(f'\n[3/4] Sample check mode - verifying {len(sampled_facts)} facts...')
+            print(f'\n[4/5] Sample check mode - verifying {len(sampled_facts)} facts...')
         
         if len(all_facts) == 0:
             return jsonify({
@@ -961,7 +1302,7 @@ Return ONLY facts that can be verified through web search. Ignore opinions and p
             })
         
         # Step 5: Verify sampled facts
-        print('\n[4/4] Verifying facts...')
+        print('\n[5/5] Verifying sampled facts...')
         verified_facts = []
         
         for i, fact in enumerate(sampled_facts, 1):
@@ -984,7 +1325,7 @@ Search Results:
 Verdict (supported/refuted/partially_true):"""
                 
                 analysis = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-5-mini",
                     messages=[{"role": "user", "content": analysis_prompt}],
                     response_format={
                         "type": "json_schema",
@@ -1026,15 +1367,30 @@ Verdict (supported/refuted/partially_true):"""
                     }
                 })
         
-        # Step 6: Calculate grade
+        # Step 6: Calculate grade with thesis weight
         supported = sum(1 for f in verified_facts if f['verification']['verdict'] == 'supported')
         refuted = sum(1 for f in verified_facts if f['verification']['verdict'] == 'refuted')
         partially_true = sum(1 for f in verified_facts if f['verification']['verdict'] == 'partially_true')
         
-        # Score: supported=100%, partially=50%, refuted=0%
-        score = ((supported * 100) + (partially_true * 50)) / len(verified_facts) if verified_facts else 0
+        # Calculate base score: supported=100%, partially=50%, refuted=0%
+        base_score = ((supported * 100) + (partially_true * 50)) / len(verified_facts) if verified_facts else 0
         
-        # Assign grade
+        # Apply thesis multiplier - if central thesis fails, significantly reduce score
+        if thesis_verdict == 'refuted':
+            # Central thesis refuted = automatic fail (max 40% score)
+            final_score = min(base_score * 0.4, 40)
+            print(f'⚠️  Central thesis REFUTED - score reduced from {base_score:.1f}% to {final_score:.1f}%')
+        elif thesis_verdict == 'partially_true':
+            # Central thesis partially true = reduced score (75% of base)
+            final_score = base_score * 0.75
+            print(f'⚠️  Central thesis PARTIALLY TRUE - score reduced from {base_score:.1f}% to {final_score:.1f}%')
+        else:
+            # Central thesis supported = full score
+            final_score = base_score
+            print(f'✓ Central thesis SUPPORTED - full score: {final_score:.1f}%')
+        
+        # Assign grade based on final score
+        score = final_score
         if score >= 80:
             grade = 'A'
             description = 'High Truth - Most claims are well-supported'
@@ -1056,6 +1412,9 @@ Verdict (supported/refuted/partially_true):"""
         print(f'GRADE: {grade} ({score:.1f}%) - {description}')
         print(f'{"="*60}\n')
         
+        # Increment user's usage count
+        increment_usage(user_uid)
+        
         return jsonify({
             'success': True,
             'videoId': video_id,
@@ -1063,6 +1422,7 @@ Verdict (supported/refuted/partially_true):"""
             'videoUploader': transcript.get('uploader', 'Unknown Uploader'),
             'videoDuration': transcript.get('duration', 0),
             'videoViewCount': transcript.get('view_count', 0),
+            'transcriptMethod': transcript_method,  # NEW: Show which method was used
             'grade': grade,
             'gradeDescription': description,
             'gradeColor': color,
@@ -1070,6 +1430,7 @@ Verdict (supported/refuted/partially_true):"""
             'totalFacts': len(all_facts),
             'sampledFacts': len(sampled_facts),
             'verifiedFacts': verified_facts,
+            'centralThesis': thesis_verification,
             'checkMode': check_mode,
             'summary': {
                 'supported': supported,
