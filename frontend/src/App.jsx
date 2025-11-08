@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Search, Shield, CheckCircle, AlertTriangle, XCircle, Loader2, Youtube, Sparkles, LogOut, User, Smile, Heart, Star, Zap, Crown, Flame, Lock } from 'lucide-react'
+import { Search, Shield, CheckCircle, AlertTriangle, XCircle, Loader2, Youtube, Sparkles, LogOut, User, Smile, Heart, Star, Zap, Crown, Flame, Lock, Coffee } from 'lucide-react'
 import { useAuth } from './contexts/AuthContext'
 import AuthModal from './components/AuthModal'
 import './App.css'
@@ -205,6 +205,17 @@ function App() {
               {/* User Profile Section */}
               {currentUser ? (
                 <div className="flex items-center gap-4">
+                  {/* Buy Me a Coffee Button */}
+                  <a 
+                    href="https://www.buymeacoffee.com/maercaestro"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 bg-[#FFDD00] hover:bg-[#FFED4E] text-black px-5 py-2.5 rounded-full transition-all duration-300 font-semibold shadow-lg hover:shadow-xl hover:scale-105 border-2 border-black/10"
+                  >
+                    <Coffee className="h-5 w-5" />
+                    Buy me a coffee
+                  </a>
+                  
                   <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md rounded-full px-4 py-2 border border-white/20">
                     <div className="relative">
                       <div 
@@ -228,13 +239,26 @@ function App() {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={handleSignInClick}
-                  className="flex items-center gap-2 !bg-[#00ADB5] hover:!bg-[#00D4FF] !text-white px-6 py-3 rounded-full transition-all duration-300 font-semibold shadow-lg hover:shadow-xl"
-                >
-                  <User className="h-5 w-5" />
-                  Sign In
-                </button>
+                <div className="flex items-center gap-4">
+                  {/* Buy Me a Coffee Button */}
+                  <a 
+                    href="https://www.buymeacoffee.com/maercaestro"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 bg-[#FFDD00] hover:bg-[#FFED4E] text-black px-5 py-2.5 rounded-full transition-all duration-300 font-semibold shadow-lg hover:shadow-xl hover:scale-105 border-2 border-black/10"
+                  >
+                    <Coffee className="h-5 w-5" />
+                    Buy me a coffee
+                  </a>
+                  
+                  <button
+                    onClick={handleSignInClick}
+                    className="flex items-center gap-2 !bg-[#00ADB5] hover:!bg-[#00D4FF] !text-white px-6 py-3 rounded-full transition-all duration-300 font-semibold shadow-lg hover:shadow-xl"
+                  >
+                    <User className="h-5 w-5" />
+                    Sign In
+                  </button>
+                </div>
               )}
             </div>
           </div>
