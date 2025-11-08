@@ -44,54 +44,118 @@ jobs:
       uses: actions/checkout@v3
     
     - name: Setup SSH
+      env:
+        SSH_KEY: ${{ secrets.AZURE_VM_SSH_KEY }}
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
       run: |
+        echo "🔑 Setting up SSH connection..."
         mkdir -p ~/.ssh
-        echo "${{ secrets.AZURE_VM_SSH_KEY }}" > ~/.ssh/azure_key
+        echo "$SSH_KEY" > ~/.ssh/azure_key
         chmod 600 ~/.ssh/azure_key
-        ssh-keyscan -H ${{ secrets.AZURE_VM_HOST }} >> ~/.ssh/known_hosts
-    
-    - name: Deploy to Azure VM
-      run: |
-        ssh -i ~/.ssh/azure_key ${{ secrets.AZURE_VM_USERNAME }}@${{ secrets.AZURE_VM_HOST }} << 'ENDSSH'
-          cd /home/azureuser/truth-quest
-          
-          echo "📥 Pulling latest code..."
-          git pull origin main
-          
-          echo "🔧 Setting up backend..."
-          cd backend
-          
-          # Create .env with secrets
-          cat > .env << 'EOF'
-        ENDSSH
+        echo "✅ SSH key configured"
         
-        # Inject secrets separately to avoid shell interpolation issues
-        ssh -i ~/.ssh/azure_key ${{ secrets.AZURE_VM_USERNAME }}@${{ secrets.AZURE_VM_HOST }} << ENDSSH
+        echo "🔍 Adding VM to known hosts..."
+        ssh-keyscan -H $VM_HOST >> ~/.ssh/known_hosts 2>&1
+        echo "✅ Known hosts updated"
+        
+        echo "🧪 Testing SSH connection..."
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no ${{ secrets.AZURE_VM_USERNAME }}@$VM_HOST "echo '✅ SSH connection successful'"
+    
+    - name: Pull Latest Code
+      env:
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+        VM_USER: ${{ secrets.AZURE_VM_USERNAME }}
+      run: |
+        echo "📥 Pulling latest code from repository..."
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'ENDSSH'
+          set -e
+          cd /home/azureuser/truth-quest
+          echo "Current directory: $(pwd)"
+          git pull origin main
+          echo "✅ Code updated successfully"
+        ENDSSH
+    
+    - name: Create Environment File
+      env:
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+        VM_USER: ${{ secrets.AZURE_VM_USERNAME }}
+        OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+        BRAVE_KEY: ${{ secrets.BRAVE_API_KEY }}
+        YOUTUBE_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      run: |
+        echo "🔧 Creating .env file with secrets..."
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << ENDSSH
+          set -e
           cd /home/azureuser/truth-quest/backend
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
-          echo "BRAVE_API_KEY=${{ secrets.BRAVE_API_KEY }}" >> .env
-          echo "YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_KEY" > .env
+          echo "BRAVE_API_KEY=$BRAVE_KEY" >> .env
+          echo "YOUTUBE_API_KEY=$YOUTUBE_KEY" >> .env
           echo "PORT=3001" >> .env
           echo "GOOGLE_APPLICATION_CREDENTIALS=./serviceAccountKey.json" >> .env
-          
+          echo "✅ Environment file created"
+        ENDSSH
+    
+    - name: Install Backend Dependencies
+      env:
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+        VM_USER: ${{ secrets.AZURE_VM_USERNAME }}
+      run: |
+        echo "📦 Installing backend dependencies..."
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'ENDSSH'
+          set -e
+          cd /home/azureuser/truth-quest/backend
           source venv/bin/activate
           pip install -r requirements.txt --quiet
-          
-          echo "🔧 Building frontend..."
-          cd ../frontend
+          echo "✅ Backend dependencies installed"
+        ENDSSH
+    
+    - name: Build Frontend
+      env:
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+        VM_USER: ${{ secrets.AZURE_VM_USERNAME }}
+      run: |
+        echo "🏗️ Building frontend..."
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'ENDSSH'
+          set -e
+          cd /home/azureuser/truth-quest/frontend
           npm install --silent
           npm run build
-          
-          echo "🔄 Restarting services..."
+          echo "✅ Frontend built successfully"
+        ENDSSH
+    
+    - name: Restart Services
+      env:
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+        VM_USER: ${{ secrets.AZURE_VM_USERNAME }}
+      run: |
+        echo "🔄 Restarting services..."
+        ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'ENDSSH'
+          set -e
           sudo systemctl restart truth-quest-backend
+          echo "✅ Backend service restarted"
           sudo systemctl restart nginx
+          echo "✅ Nginx restarted"
           
-          echo "✅ Deployment complete!"
+          # Wait a moment for services to start
+          sleep 3
+          
+          # Check service status
+          echo "📊 Service status:"
+          sudo systemctl is-active truth-quest-backend || echo "⚠️ Backend service not active"
+          sudo systemctl is-active nginx || echo "⚠️ Nginx not active"
         ENDSSH
           
     - name: Verify Deployment
+      env:
+        VM_HOST: ${{ secrets.AZURE_VM_HOST }}
       run: |
-        sleep 10
-        echo "✅ Deployment successful!"
-        echo "Frontend: http://${{ secrets.AZURE_VM_HOST }}"
-        echo "Backend: http://${{ secrets.AZURE_VM_HOST }}:3001"
+        echo "⏳ Waiting for services to stabilize..."
+        sleep 5
+        
+        echo ""
+        echo "✅ Deployment Complete!"
+        echo "================================"
+        echo "Frontend: http://$VM_HOST"
+        echo "Backend API: http://$VM_HOST:3001"
+        echo "Health Check: http://$VM_HOST:3001/api/health"
+        echo "================================"
