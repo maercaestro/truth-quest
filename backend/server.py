@@ -341,7 +341,7 @@ def fetch_transcript_whisper(video_id):
     audio_file_path = os.path.join(temp_dir, 'audio.mp3')
     
     try:
-        # Download audio using yt-dlp
+        # Download audio using yt-dlp with enhanced bot bypass
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -353,18 +353,12 @@ def fetch_transcript_whisper(video_id):
             'quiet': True,
             'no_warnings': True,
             'ffmpeg_location': FFMPEG_PATH,
-            # Add these to bypass bot detection
+            # Use Android client for better bot bypass
             'extractor_args': {
                 'youtube': {
-                    'skip': ['dash', 'hls'],
-                    'player_client': ['android', 'web']
+                    'player_client': ['android'],
+                    'skip': ['dash', 'hls']
                 }
-            },
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
             }
         }
         
@@ -434,205 +428,250 @@ def fetch_transcript_whisper(video_id):
             print(f'DEBUG: Error cleaning up temp files: {e}')
 
 def fetch_transcript_youtube_api(video_id):
-    """Fetch transcript using YouTube Data API v3 with detailed debugging"""
-    if not youtube_api:
+    """Fetch transcript using YouTube's timedtext API (no OAuth required)"""
+    if not YOUTUBE_API_KEY:
         raise Exception('YouTube API key not configured')
     
-    print(f'DEBUG: Using YouTube API key: {YOUTUBE_API_KEY[:10]}...')
-    print(f'DEBUG: Attempting to fetch captions for video ID: {video_id}')
+    print(f'DEBUG: Using YouTube timedtext API for video ID: {video_id}')
     
     try:
-        # Get caption tracks for the video
-        print('DEBUG: Calling captions().list()...')
-        captions_response = youtube_api.captions().list(
-            part='snippet',
-            videoId=video_id
-        ).execute()
-        
-        print(f'DEBUG: Captions response: {captions_response}')
-        
-        if not captions_response.get('items'):
-            raise Exception('No captions available')
-        
-        # Find English caption track (prefer manual, then auto-generated)
-        caption_id = None
-        for item in captions_response['items']:
-            lang = item['snippet']['language']
-            track_kind = item['snippet'].get('trackKind', 'standard')
-            
-            print(f'DEBUG: Found caption - Language: {lang}, Kind: {track_kind}, ID: {item["id"]}')
-            
-            if lang == 'en':
-                if track_kind == 'standard':
-                    caption_id = item['id']
-                    break
-                elif not caption_id:  # Use auto-generated as fallback
-                    caption_id = item['id']
-        
-        if not caption_id and captions_response['items']:
-            # Use first available caption
-            caption_id = captions_response['items'][0]['id']
-        
-        if not caption_id:
-            raise Exception('No suitable captions found')
-        
-        print(f'DEBUG: Selected caption ID: {caption_id}')
-        print('DEBUG: Calling captions().download()...')
-        
-        # Download the caption
-        caption = youtube_api.captions().download(
-            id=caption_id,
-            tfmt='srt'  # SubRip format
-        ).execute()
-        
-        print(f'DEBUG: Downloaded caption length: {len(caption)} bytes')
-        
-        # Parse SRT format to extract text
-        segments = []
-        full_text_parts = []
-        
-        # Simple SRT parser
-        blocks = caption.decode('utf-8').strip().split('\n\n')
-        for block in blocks:
-            lines = block.split('\n')
-            if len(lines) >= 3:
-                # lines[0] = sequence number
-                # lines[1] = timestamp
-                # lines[2:] = text
-                text = ' '.join(lines[2:])
-                full_text_parts.append(text)
-                
-                # Parse timestamp
-                timestamp = lines[1].split(' --> ')[0]
-                h, m, s = timestamp.replace(',', '.').split(':')
-                start_time = float(h) * 3600 + float(m) * 60 + float(s)
-                
-                segments.append({
-                    'text': text,
-                    'start': start_time,
-                    'duration': 0  # SRT doesn't directly provide duration
-                })
-        
-        full_text = ' '.join(full_text_parts)
-        
-        return {
-            'full': full_text,
-            'segments': segments,
-            'method': 'youtube_api'
+        # First, get the video info to find caption tracks
+        url = f'https://www.youtube.com/watch?v={video_id}'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
         }
         
-    except HttpError as e:
-        print(f'DEBUG: HttpError occurred')
-        print(f'DEBUG: Status code: {e.resp.status}')
-        print(f'DEBUG: Error details: {e.error_details}')
-        print(f'DEBUG: Response: {e.resp}')
+        response = requests.get(url, headers=headers)
         
-        if e.resp.status == 403:
-            # Check if it's actually a login issue or quota
-            error_reason = e.error_details[0].get('reason', 'unknown') if e.error_details else 'unknown'
-            print(f'DEBUG: Error reason: {error_reason}')
-            
-            if error_reason == 'required':
-                raise Exception(f'YouTube API authentication error: {e.error_details}. This usually means the API requires OAuth instead of just API key for captions access.')
+        if response.status_code != 200:
+            raise Exception(f'Failed to fetch video page: {response.status_code}')
+        
+        # Extract caption track URLs from the page
+        import json as json_lib
+        
+        # Find captionTracks in the page HTML
+        if '"captionTracks":' in response.text:
+            # Extract the captionTracks JSON
+            start = response.text.find('"captionTracks":')
+            if start != -1:
+                start = start + len('"captionTracks":')
+                # Find the end of the array
+                bracket_count = 0
+                end = start
+                for i, char in enumerate(response.text[start:], start):
+                    if char == '[':
+                        bracket_count += 1
+                    elif char == ']':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            end = i + 1
+                            break
+                
+                caption_tracks_json = response.text[start:end]
+                caption_tracks = json_lib.loads(caption_tracks_json)
+                
+                print(f'DEBUG: Found {len(caption_tracks)} caption tracks')
+                
+                # Find English caption
+                caption_url = None
+                for track in caption_tracks:
+                    lang_code = track.get('languageCode', '')
+                    print(f'DEBUG: Caption track - Language: {lang_code}, Name: {track.get("name", {}).get("simpleText", "")}')
+                    
+                    if lang_code.startswith('en'):
+                        caption_url = track.get('baseUrl')
+                        print(f'DEBUG: Selected English caption: {lang_code}')
+                        break
+                
+                if not caption_url and caption_tracks:
+                    # Use first available caption
+                    caption_url = caption_tracks[0].get('baseUrl')
+                    print(f'DEBUG: Using first available caption')
+                
+                if not caption_url:
+                    raise Exception('No caption URL found')
+                
+                # Fetch the caption data
+                print(f'DEBUG: Fetching caption from: {caption_url[:100]}...')
+                caption_response = requests.get(caption_url, headers=headers)
+                
+                if caption_response.status_code != 200:
+                    raise Exception(f'Failed to fetch caption: {caption_response.status_code}')
+                
+                # Parse XML caption data
+                import xml.etree.ElementTree as ET
+                
+                root = ET.fromstring(caption_response.text)
+                
+                segments = []
+                full_text_parts = []
+                
+                for text_elem in root.findall('.//text'):
+                    text = text_elem.text
+                    if text:
+                        # Clean up the text
+                        text = text.strip()
+                        if text:
+                            start_time = float(text_elem.get('start', 0))
+                            duration = float(text_elem.get('dur', 0))
+                            
+                            segments.append({
+                                'text': text,
+                                'start': start_time,
+                                'duration': duration
+                            })
+                            full_text_parts.append(text)
+                
+                full_text = ' '.join(full_text_parts)
+                
+                print(f'DEBUG: Extracted {len(segments)} caption segments, {len(full_text)} chars')
+                
+                return {
+                    'full': full_text,
+                    'segments': segments,
+                    'method': 'youtube_timedtext_api'
+                }
             else:
-                raise Exception('YouTube API quota exceeded or access forbidden')
-        elif e.resp.status == 404:
-            raise Exception('Video not found or captions not available')
+                raise Exception('Could not find caption tracks in page')
         else:
-            raise Exception(f'YouTube API error: {e.error_details}')
+            raise Exception('No captions available for this video')
+            
+    except Exception as e:
+        print(f'DEBUG: YouTube timedtext API error: {str(e)}')
+        raise
 
 def fetch_transcript_ytdlp(video_id):
-    """Fetch transcript using yt-dlp"""
-    ydl_opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'writeautomaticsub': True,
-        'subtitleslangs': ['en'],
-        'quiet': True,
-        'no_warnings': True,
-        # Add these to bypass bot detection
-        'extractor_args': {
-            'youtube': {
-                'skip': ['dash', 'hls'],
-                'player_client': ['android', 'web']
+    """Fetch transcript using yt-dlp with enhanced bot bypass"""
+    
+    # Try multiple strategies to bypass bot detection
+    strategies = [
+        # Strategy 1: Android client (most reliable)
+        {
+            'name': 'Android client',
+            'opts': {
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android'],
+                        'skip': ['dash', 'hls']
+                    }
+                }
             }
         },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Sec-Fetch-Mode': 'navigate',
+        # Strategy 2: iOS client
+        {
+            'name': 'iOS client',
+            'opts': {
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['ios'],
+                        'skip': ['dash', 'hls']
+                    }
+                }
+            }
+        },
+        # Strategy 3: TV embedded client
+        {
+            'name': 'TV embedded',
+            'opts': {
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['tv_embedded'],
+                        'skip': ['dash', 'hls']
+                    }
+                }
+            }
         }
-    }
+    ]
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
-        
-        # Get subtitles
-        subtitles = info.get('subtitles', {})
-        automatic_captions = info.get('automatic_captions', {})
-        
-        # Try to get manual subtitles first, then automatic
-        transcript_data = None
-        if 'en' in subtitles:
-            transcript_data = subtitles['en']
-        elif 'en' in automatic_captions:
-            transcript_data = automatic_captions['en']
-        else:
-            # Try any available language
-            if subtitles:
-                lang = list(subtitles.keys())[0]
-                transcript_data = subtitles[lang]
-            elif automatic_captions:
-                lang = list(automatic_captions.keys())[0]
-                transcript_data = automatic_captions[lang]
-        
-        if not transcript_data:
-            raise Exception('No subtitles available for this video')
-        
-        # Find the json3 format (contains text data)
-        json_url = None
-        for fmt in transcript_data:
-            if fmt.get('ext') == 'json3':
-                json_url = fmt.get('url')
-                break
-        
-        if not json_url:
-            raise Exception('Could not find subtitle data')
-        
-        # Fetch and parse the subtitle JSON
-        import urllib.request
-        import json
-        
-        with urllib.request.urlopen(json_url) as response:
-            subtitle_json = json.loads(response.read().decode('utf-8'))
-        
-        # Extract text from events
-        segments = []
-        full_text_parts = []
-        
-        for event in subtitle_json.get('events', []):
-            if 'segs' in event:
-                text = ''.join([seg.get('utf8', '') for seg in event['segs']])
-                if text.strip():
-                    segments.append({
-                        'text': text,
-                        'start': event.get('tStartMs', 0) / 1000,
-                        'duration': event.get('dDurationMs', 0) / 1000
-                    })
-                    full_text_parts.append(text)
-        
-        full_text = ' '.join(full_text_parts)
-        
-        return {
-            'full': full_text,
-            'segments': segments,
-            'method': 'yt-dlp',
-            'title': info.get('title', 'Unknown Title'),
-            'uploader': info.get('uploader', 'Unknown Uploader'),
-            'duration': info.get('duration', 0),
-            'view_count': info.get('view_count', 0)
-        }
+    for strategy in strategies:
+        try:
+            print(f'DEBUG: Trying yt-dlp with {strategy["name"]}...')
+            
+            ydl_opts = {
+                'skip_download': True,
+                'writesubtitles': True,
+                'writeautomaticsub': True,
+                'subtitleslangs': ['en'],
+                'quiet': True,
+                'no_warnings': True,
+                **strategy['opts']
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
+                
+                # Get subtitles
+                subtitles = info.get('subtitles', {})
+                automatic_captions = info.get('automatic_captions', {})
+                
+                # Try to get manual subtitles first, then automatic
+                transcript_data = None
+                if 'en' in subtitles:
+                    transcript_data = subtitles['en']
+                elif 'en' in automatic_captions:
+                    transcript_data = automatic_captions['en']
+                else:
+                    # Try any available language
+                    if subtitles:
+                        lang = list(subtitles.keys())[0]
+                        transcript_data = subtitles[lang]
+                    elif automatic_captions:
+                        lang = list(automatic_captions.keys())[0]
+                        transcript_data = automatic_captions[lang]
+                
+                if not transcript_data:
+                    continue  # Try next strategy
+                
+                # Find the json3 format (contains text data)
+                json_url = None
+                for fmt in transcript_data:
+                    if fmt.get('ext') == 'json3':
+                        json_url = fmt.get('url')
+                        break
+                
+                if not json_url:
+                    continue  # Try next strategy
+                
+                # Fetch and parse the subtitle JSON
+                import urllib.request
+                import json
+                
+                with urllib.request.urlopen(json_url) as response:
+                    subtitle_json = json.loads(response.read().decode('utf-8'))
+                
+                # Extract text from events
+                full_text_parts = []
+                segments = []
+                
+                for event in subtitle_json.get('events', []):
+                    if 'segs' in event:
+                        text = ''.join([seg.get('utf8', '') for seg in event['segs']])
+                        if text.strip():
+                            full_text_parts.append(text.strip())
+                            segments.append({
+                                'text': text.strip(),
+                                'start': event.get('tStartMs', 0) / 1000,
+                                'duration': event.get('dDurationMs', 0) / 1000
+                            })
+                
+                full_text = ' '.join(full_text_parts)
+                
+                if full_text:
+                    print(f'✓ Success with {strategy["name"]}!')
+                    return {
+                        'full': full_text,
+                        'segments': segments,
+                        'method': f'yt-dlp ({strategy["name"]})'
+                    }
+                    
+        except Exception as e:
+            print(f'DEBUG: {strategy["name"]} failed: {str(e)}')
+            continue
+    
+    # All strategies failed
+    raise Exception('All yt-dlp strategies failed. YouTube may be blocking automated access.')
+
 
 @app.route('/api/transcription', methods=['POST'])
 def get_transcription():
@@ -1190,36 +1229,60 @@ def analyze_video():
         transcript = None
         transcript_method = None
         
-        # METHOD 1: Try youtube-transcript-api (no OAuth required, most reliable)
+        # METHOD 1: Try YouTube timedtext API (scraping, no OAuth required)
         try:
-            print('Trying youtube-transcript-api...')
-            print(f'DEBUG: Fetching transcript for video ID: {video_id}')
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-            # Combine all text segments
-            full_text = ' '.join([entry['text'] for entry in transcript_list])
-            transcript = {'full': full_text}
-            transcript_method = 'youtube-transcript-api'
-            print(f'✓ Transcript fetched via youtube-transcript-api ({len(full_text)} chars)')
-        except TranscriptsDisabled as e:
-            print(f'✗ youtube-transcript-api failed: Transcripts are disabled for this video - {str(e)}')
-        except NoTranscriptFound as e:
-            print(f'✗ youtube-transcript-api failed: No transcript found - {str(e)}')
+            print('Trying YouTube timedtext API...')
+            transcript = fetch_transcript_youtube_api(video_id)
+            transcript_method = transcript.get('method', 'youtube_timedtext_api')
+            print(f'✓ Transcript fetched via YouTube timedtext API ({len(transcript["full"])} chars)')
         except Exception as e:
-            print(f'✗ youtube-transcript-api error: {type(e).__name__}: {str(e)}')
-            import traceback
-            print(f'Traceback: {traceback.format_exc()}')
+            print(f'✗ YouTube timedtext API failed: {str(e)}')
         
-        # METHOD 2: Try yt-dlp
+        # METHOD 2: Try youtube-transcript-api (no OAuth required)
         if not transcript:
             try:
-                print('Trying yt-dlp...')
+                print('Trying youtube-transcript-api...')
+                print(f'DEBUG: Fetching transcript for video ID: {video_id}')
+                
+                # Try with different language codes if English doesn't work
+                language_codes = ['en', 'en-US', 'en-GB', 'a.en']  # a.en is auto-generated
+                
+                for lang in language_codes:
+                    try:
+                        print(f'DEBUG: Trying language code: {lang}')
+                        transcript_list = YouTubeTranscriptApi.get_transcript(
+                            video_id, 
+                            languages=[lang],
+                            proxies=None,
+                            preserve_formatting=False
+                        )
+                        # Combine all text segments
+                        full_text = ' '.join([entry['text'] for entry in transcript_list])
+                        transcript = {'full': full_text}
+                        transcript_method = f'youtube-transcript-api ({lang})'
+                        print(f'✓ Transcript fetched via youtube-transcript-api with {lang} ({len(full_text)} chars)')
+                        break
+                    except (TranscriptsDisabled, NoTranscriptFound):
+                        continue
+                        
+            except TranscriptsDisabled as e:
+                print(f'✗ youtube-transcript-api failed: Transcripts are disabled for this video - {str(e)}')
+            except NoTranscriptFound as e:
+                print(f'✗ youtube-transcript-api failed: No transcript found - {str(e)}')
+            except Exception as e:
+                print(f'✗ youtube-transcript-api error: {type(e).__name__}: {str(e)}')
+        
+        # METHOD 3: Try yt-dlp with multiple strategies
+        if not transcript:
+            try:
+                print('Trying yt-dlp with enhanced bot bypass...')
                 transcript = fetch_transcript_ytdlp(video_id)
-                transcript_method = 'yt-dlp'
-                print(f'✓ Transcript fetched via yt-dlp ({len(transcript["full"])} chars)')
+                transcript_method = transcript.get('method', 'yt-dlp')
+                print(f'✓ Transcript fetched via {transcript_method} ({len(transcript["full"])} chars)')
             except Exception as e:
                 print(f'✗ yt-dlp failed: {str(e)}')
         
-        # METHOD 3: Fall back to Whisper if both failed
+        # METHOD 4: Try OpenAI Whisper API as last resort
         if not transcript and openai_client:
             try:
                 print('Trying OpenAI Whisper...')
