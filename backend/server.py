@@ -1193,16 +1193,21 @@ def analyze_video():
         # METHOD 1: Try youtube-transcript-api (no OAuth required, most reliable)
         try:
             print('Trying youtube-transcript-api...')
+            print(f'DEBUG: Fetching transcript for video ID: {video_id}')
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
             # Combine all text segments
             full_text = ' '.join([entry['text'] for entry in transcript_list])
             transcript = {'full': full_text}
             transcript_method = 'youtube-transcript-api'
             print(f'✓ Transcript fetched via youtube-transcript-api ({len(full_text)} chars)')
-        except (TranscriptsDisabled, NoTranscriptFound) as e:
-            print(f'✗ youtube-transcript-api failed: {str(e)}')
+        except TranscriptsDisabled as e:
+            print(f'✗ youtube-transcript-api failed: Transcripts are disabled for this video - {str(e)}')
+        except NoTranscriptFound as e:
+            print(f'✗ youtube-transcript-api failed: No transcript found - {str(e)}')
         except Exception as e:
-            print(f'✗ youtube-transcript-api error: {str(e)}')
+            print(f'✗ youtube-transcript-api error: {type(e).__name__}: {str(e)}')
+            import traceback
+            print(f'Traceback: {traceback.format_exc()}')
         
         # METHOD 2: Try yt-dlp
         if not transcript:
