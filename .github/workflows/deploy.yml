@@ -94,7 +94,14 @@ jobs:
           set -e
           cd /home/azureuser/truth-quest
           echo "Current directory: $(pwd)"
+          
+          # Stash any local changes to avoid conflicts
+          echo "🔄 Stashing any local changes..."
+          git stash
+          
+          # Pull latest code
           git pull origin main
+          
           echo "✅ Code updated successfully"
         ENDSSH
     

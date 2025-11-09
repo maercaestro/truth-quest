@@ -96,6 +96,11 @@ function App() {
     setResult(null)
 
     try {
+      // Get fresh token before making request
+      console.log('🔑 Getting fresh auth token...')
+      const freshToken = await currentUser.getIdToken(true) // Force refresh
+      console.log('✅ Token obtained, making API request to:', `${API_URL}/api/analyze`)
+      
       // Simulate progress updates
       setProgress(10)
       setProgressMessage('Fetching transcript...')
@@ -121,21 +126,29 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
+          'Authorization': `Bearer ${freshToken}`
         },
         body: JSON.stringify({ 
           youtubeUrl,
           checkMode: mode
         }),
       })
+      
+      console.log('📡 API Response status:', response.status)
 
       clearInterval(progressInterval)
       setProgress(100)
       setProgressMessage('Analysis complete!')
 
       const data = await response.json()
+      console.log('📊 API Response data:', data)
 
       if (!response.ok) {
+        // Handle authentication errors
+        if (response.status === 401) {
+          console.error('❌ Authentication failed:', data)
+          throw new Error('Authentication failed. Please sign in again.')
+        }
         // Handle rate limit specifically
         if (response.status === 429) {
           throw new Error(data.error || 'Usage limit exceeded. Please try again later.')
