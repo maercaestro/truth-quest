@@ -1666,19 +1666,19 @@ Verdict (supported/refuted/partially_true):"""
         # Calculate base score: supported=100%, partially=50%, refuted=0%
         base_score = ((supported * 100) + (partially_true * 50)) / len(verified_facts) if verified_facts else 0
         
-        # Apply thesis multiplier - if central thesis fails, significantly reduce score
+        # Apply thesis multiplier - thesis has significant weight on final score
         if thesis_verdict == 'refuted':
             # Central thesis refuted = automatic fail (max 40% score)
             final_score = min(base_score * 0.4, 40)
             print(f'⚠️  Central thesis REFUTED - score reduced from {base_score:.1f}% to {final_score:.1f}%')
         elif thesis_verdict == 'partially_true':
-            # Central thesis partially true = reduced score (75% of base)
-            final_score = base_score * 0.75
+            # Central thesis partially true = slightly reduced score (90% of base)
+            final_score = base_score * 0.90
             print(f'⚠️  Central thesis PARTIALLY TRUE - score reduced from {base_score:.1f}% to {final_score:.1f}%')
         else:
-            # Central thesis supported = full score
-            final_score = base_score
-            print(f'✓ Central thesis SUPPORTED - full score: {final_score:.1f}%')
+            # Central thesis supported = bonus! +15 points (capped at 100)
+            final_score = min(base_score + 15, 100)
+            print(f'✓ Central thesis SUPPORTED - score boosted from {base_score:.1f}% to {final_score:.1f}%')
         
         # Assign grade based on final score
         score = final_score
