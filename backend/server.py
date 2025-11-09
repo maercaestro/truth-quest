@@ -82,7 +82,7 @@ BRAVE_API_KEY = os.getenv('BRAVE_API_KEY')
 FFMPEG_PATH = '/opt/homebrew/bin/ffmpeg'
 
 # Usage limits
-DAILY_LIMIT = 10  # 10 analyses per day for free users
+DAILY_LIMIT = 5  # 5 analyses per day for free users
 MONTHLY_LIMIT = 100  # 100 analyses per month for free users
 
 def check_usage_limits(user_uid):

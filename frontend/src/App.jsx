@@ -7,7 +7,7 @@ import './App.css'
 
 // CONFIGURATION - Easy to change for testing/production
 const USAGE_LIMITS = {
-  DAILY_LIMIT: 10,    // Change this for daily limit
+  DAILY_LIMIT: 5,    // Change this for daily limit
   MONTHLY_LIMIT: 150  // Change this for monthly limit (kept for backend compatibility)
 }
 
