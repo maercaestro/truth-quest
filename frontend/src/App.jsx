@@ -291,6 +291,28 @@ function App() {
               </h2>
               <p className="text-gray-600 text-lg">Enter a YouTube URL to verify its factual accuracy</p>
               
+              {/* Guidelines */}
+              <div className="mt-6 bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-2xl p-6 max-w-2xl mx-auto">
+                <h3 className="text-lg font-semibold text-[#2C3E50] mb-3 flex items-center justify-center gap-2">
+                  <Sparkles className="h-5 w-5 text-[#00ADB5]" />
+                  Best Results Guidelines
+                </h3>
+                <div className="text-left space-y-2">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">Focus on fact/documentary type videos</span> - News reports, educational content, and documentaries work best
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-gray-700">
+                      <span className="font-semibold">Keep videos under 1 hour</span> - 15-20 minute videos provide optimal analysis results
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
               {/* Usage Counter */}
               {currentUser && (
                 <div className="mt-4 inline-flex items-center gap-2 bg-blue-50 border border-blue-200 px-4 py-2 rounded-full">
