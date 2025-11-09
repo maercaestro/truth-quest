@@ -11,3 +11,7 @@ __pycache__/
 *serviceAccountKey*.json
 serviceAccount*.json
 firebase-credentials.json
+
+# YouTube cookies (contains authentication tokens)
+youtube_cookies.txt
+*cookies*.txt

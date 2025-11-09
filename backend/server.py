@@ -65,6 +65,12 @@ except Exception as e:
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 youtube_api = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY) if YOUTUBE_API_KEY else None
 
+# YouTube cookies path for yt-dlp (to bypass bot detection)
+YOUTUBE_COOKIES_PATH = os.getenv('YOUTUBE_COOKIES_PATH', './youtube_cookies.txt')
+
+# RapidAPI configuration for YouTube transcripts
+RAPIDAPI_KEY = os.getenv('RAPIDAPI_KEY')
+
 # OpenAI configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -341,7 +347,7 @@ def fetch_transcript_whisper(video_id):
     audio_file_path = os.path.join(temp_dir, 'audio.mp3')
     
     try:
-        # Download audio using yt-dlp with enhanced bot bypass
+        # Download audio using yt-dlp with cookies support
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -361,6 +367,13 @@ def fetch_transcript_whisper(video_id):
                 }
             }
         }
+        
+        # Add cookies if file exists
+        if os.path.exists(YOUTUBE_COOKIES_PATH):
+            ydl_opts['cookiefile'] = YOUTUBE_COOKIES_PATH
+            print(f'DEBUG: Using cookies from: {YOUTUBE_COOKIES_PATH}')
+        else:
+            print(f'DEBUG: No cookies file found at: {YOUTUBE_COOKIES_PATH}')
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
@@ -426,6 +439,79 @@ def fetch_transcript_whisper(video_id):
             print('DEBUG: Cleaned up temporary files')
         except Exception as e:
             print(f'DEBUG: Error cleaning up temp files: {e}')
+
+def fetch_transcript_rapidapi(video_id):
+    """Fetch transcript using RapidAPI YouTube Transcripts service (no download required)"""
+    if not RAPIDAPI_KEY:
+        raise Exception('RapidAPI key not configured')
+    
+    print(f'DEBUG: Using RapidAPI for video: {video_id}')
+    
+    try:
+        # RapidAPI YouTube Transcripts endpoint
+        url = "https://youtube-transcripts.p.rapidapi.com/youtube/transcript"
+        
+        # Build the full YouTube URL
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        querystring = {
+            "url": youtube_url,
+            "videoId": video_id,
+            "lang": "en",
+            "chunkSize": "500",
+            "text": "false"  # Get structured data with timestamps
+        }
+        
+        headers = {
+            "x-rapidapi-key": RAPIDAPI_KEY,
+            "x-rapidapi-host": "youtube-transcripts.p.rapidapi.com"
+        }
+        
+        print(f'DEBUG: Requesting transcript from RapidAPI...')
+        response = requests.get(url, headers=headers, params=querystring, timeout=30)
+        
+        print(f'DEBUG: RapidAPI status code: {response.status_code}')
+        
+        if response.status_code != 200:
+            raise Exception(f'RapidAPI returned status {response.status_code}: {response.text}')
+        
+        data = response.json()
+        print(f'DEBUG: RapidAPI response type: {type(data)}')
+        
+        # RapidAPI returns array of transcript segments
+        # Format: [{"text": "...", "start": 0, "duration": 2}, ...]
+        if isinstance(data, list):
+            full_text = ' '.join([item.get('text', '') for item in data])
+            segments = [
+                {
+                    'text': item.get('text', ''),
+                    'start': item.get('start', 0),
+                    'duration': item.get('duration', 0)
+                }
+                for item in data
+            ]
+        elif isinstance(data, dict) and 'content' in data:
+            # Alternative format: {"content": [...]}
+            content = data['content']
+            full_text = ' '.join([item.get('text', '') for item in content])
+            segments = content
+        else:
+            raise Exception(f'Unexpected RapidAPI response format: {type(data)}')
+        
+        print(f'DEBUG: RapidAPI transcript fetched: {len(full_text)} chars, {len(segments)} segments')
+        
+        return {
+            'full': full_text,
+            'segments': segments,
+            'method': 'rapidapi'
+        }
+        
+    except requests.exceptions.RequestException as e:
+        print(f'DEBUG: RapidAPI request error: {str(e)}')
+        raise Exception(f'RapidAPI request failed: {str(e)}')
+    except Exception as e:
+        print(f'DEBUG: RapidAPI error: {str(e)}')
+        raise
 
 def fetch_transcript_youtube_api(video_id):
     """Fetch transcript using YouTube's timedtext API (no OAuth required)"""
@@ -597,6 +683,13 @@ def fetch_transcript_ytdlp(video_id):
                 'no_warnings': True,
                 **strategy['opts']
             }
+            
+            # Add cookies if file exists
+            if os.path.exists(YOUTUBE_COOKIES_PATH):
+                ydl_opts['cookiefile'] = YOUTUBE_COOKIES_PATH
+                print(f'DEBUG: Using cookies from: {YOUTUBE_COOKIES_PATH}')
+            else:
+                print(f'DEBUG: No cookies file found at: {YOUTUBE_COOKIES_PATH}')
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
@@ -1229,16 +1322,27 @@ def analyze_video():
         transcript = None
         transcript_method = None
         
-        # METHOD 1: Try YouTube timedtext API (scraping, no OAuth required)
-        try:
-            print('Trying YouTube timedtext API...')
-            transcript = fetch_transcript_youtube_api(video_id)
-            transcript_method = transcript.get('method', 'youtube_timedtext_api')
-            print(f'✓ Transcript fetched via YouTube timedtext API ({len(transcript["full"])} chars)')
-        except Exception as e:
-            print(f'✗ YouTube timedtext API failed: {str(e)}')
+        # METHOD 1: Try RapidAPI (no download, works for all users)
+        if RAPIDAPI_KEY:
+            try:
+                print('Trying RapidAPI YouTube Transcript...')
+                transcript = fetch_transcript_rapidapi(video_id)
+                transcript_method = transcript.get('method', 'rapidapi')
+                print(f'✓ Transcript fetched via RapidAPI ({len(transcript["full"])} chars)')
+            except Exception as e:
+                print(f'✗ RapidAPI failed: {str(e)}')
         
-        # METHOD 2: Try youtube-transcript-api (no OAuth required)
+        # METHOD 2: Try YouTube timedtext API (scraping, no OAuth required)
+        if not transcript:
+            try:
+                print('Trying YouTube timedtext API...')
+                transcript = fetch_transcript_youtube_api(video_id)
+                transcript_method = transcript.get('method', 'youtube_timedtext_api')
+                print(f'✓ Transcript fetched via YouTube timedtext API ({len(transcript["full"])} chars)')
+            except Exception as e:
+                print(f'✗ YouTube timedtext API failed: {str(e)}')
+        
+        # METHOD 3: Try youtube-transcript-api (no OAuth required)
         if not transcript:
             try:
                 print('Trying youtube-transcript-api...')

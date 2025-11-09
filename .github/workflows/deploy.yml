@@ -112,6 +112,7 @@ jobs:
         OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
         BRAVE_KEY: ${{ secrets.BRAVE_API_KEY }}
         YOUTUBE_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
       run: |
         echo "🔧 Creating .env file with secrets..."
         ssh -i ~/.ssh/azure_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << ENDSSH
@@ -120,6 +121,7 @@ jobs:
           echo "OPENAI_API_KEY=$OPENAI_KEY" > .env
           echo "BRAVE_API_KEY=$BRAVE_KEY" >> .env
           echo "YOUTUBE_API_KEY=$YOUTUBE_KEY" >> .env
+          echo "RAPIDAPI_KEY=$RAPIDAPI_KEY" >> .env
           echo "PORT=3001" >> .env
           echo "GOOGLE_APPLICATION_CREDENTIALS=./serviceAccountKey.json" >> .env
           echo "✅ Environment file created"
