@@ -27,7 +27,8 @@ CORS(app, resources={
             "https://truth-quest.web.app",  # Firebase Hosting
             "https://truth-quest.firebaseapp.com",  # Firebase Hosting alternate
             "https://*.web.app",  # Any Firebase preview channels
-            "https://*.firebaseapp.com"  # Any Firebase preview channels
+            "https://*.firebaseapp.com",  # Any Firebase preview channels
+            "https://api.oasis-pet.com"  # Production API domain
         ],
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],

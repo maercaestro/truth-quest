@@ -30,13 +30,11 @@ jobs:
         npm ci
     
     - name: Create .env file
-      env:
-        AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST }}
       run: |
         cd frontend
-        echo "VITE_API_URL=http://$AZURE_VM_HOST:3001" > .env.production
+        echo "VITE_API_URL=https://api.oasis-pet.com" > .env.production
         echo "✅ Environment file created"
-        echo "API URL: http://$AZURE_VM_HOST:3001"
+        echo "API URL: https://api.oasis-pet.com"
     
     - name: Build frontend
       run: |
@@ -59,5 +57,5 @@ jobs:
         echo "✅ Frontend Deployed Successfully!"
         echo "================================"
         echo "Frontend URL: https://truth-quest.web.app"
-        echo "Backend API: http://${{ secrets.AZURE_VM_HOST }}:3001"
+        echo "Backend API: https://api.oasis-pet.com"
         echo "================================"
