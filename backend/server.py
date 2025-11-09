@@ -13,6 +13,7 @@ import firebase_admin
 from firebase_admin import credentials, auth, firestore
 from functools import wraps
 from datetime import datetime, timedelta
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 load_dotenv()
 
@@ -1184,22 +1185,39 @@ def analyze_video():
         print(f'ANALYZING VIDEO: {video_id} (Mode: {check_mode})')
         print(f'{"="*60}')
         
-        # Step 2: Get transcript (2-tier system: yt-dlp → Whisper)
+        # Step 2: Get transcript (3-tier system: youtube-transcript-api → yt-dlp → Whisper)
         print('\n[1/5] Fetching transcript...')
         transcript = None
         transcript_method = None
         
-        # METHOD 1: Try yt-dlp
+        # METHOD 1: Try youtube-transcript-api (most reliable, no bot detection)
         try:
-            transcript = fetch_transcript_ytdlp(video_id)
-            transcript_method = 'yt-dlp'
-            print(f'✓ Transcript fetched via yt-dlp ({len(transcript["full"])} chars)')
+            print('Trying youtube-transcript-api...')
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+            # Combine all text segments
+            full_text = ' '.join([entry['text'] for entry in transcript_list])
+            transcript = {'full': full_text}
+            transcript_method = 'youtube-transcript-api'
+            print(f'✓ Transcript fetched via youtube-transcript-api ({len(full_text)} chars)')
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            print(f'✗ youtube-transcript-api failed: {str(e)}')
         except Exception as e:
-            print(f'✗ yt-dlp failed: {str(e)}')
+            print(f'✗ youtube-transcript-api error: {str(e)}')
         
-        # METHOD 2: Fall back to Whisper if yt-dlp failed
+        # METHOD 2: Try yt-dlp
+        if not transcript:
+            try:
+                print('Trying yt-dlp...')
+                transcript = fetch_transcript_ytdlp(video_id)
+                transcript_method = 'yt-dlp'
+                print(f'✓ Transcript fetched via yt-dlp ({len(transcript["full"])} chars)')
+            except Exception as e:
+                print(f'✗ yt-dlp failed: {str(e)}')
+        
+        # METHOD 3: Fall back to Whisper if both failed
         if not transcript and openai_client:
             try:
+                print('Trying OpenAI Whisper...')
                 transcript = fetch_transcript_whisper(video_id)
                 transcript_method = 'OpenAI Whisper'
                 print(f'✓ Transcript fetched via Whisper ({len(transcript["full"])} chars)')
