@@ -1739,6 +1739,68 @@ Verdict (supported/refuted/partially_true):"""
             'details': str(e)
         }), 500
 
+@app.route('/api/usage', methods=['GET'])
+@verify_token
+def get_usage():
+    """Get user's current usage count from Firestore"""
+    try:
+        user_uid = request.user['uid']
+        
+        if not db:
+            return jsonify({'error': 'Database not available'}), 500
+        
+        # Get user's usage document
+        user_ref = db.collection('usage').document(user_uid)
+        user_doc = user_ref.get()
+        
+        now = datetime.utcnow()
+        today = str(now.date())
+        current_month = f"{now.year}-{now.month:02d}"
+        
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            
+            # Get daily count (reset if different day)
+            last_used_date = data.get('last_used_date', '')
+            if last_used_date == today:
+                daily_count = data.get('daily_count', 0)
+            else:
+                daily_count = 0  # Reset if it's a new day
+            
+            # Get monthly count (reset if different month)
+            current_month_data = data.get('current_month', '')
+            if current_month_data == current_month:
+                monthly_count = data.get('monthly_count', 0)
+            else:
+                monthly_count = 0  # Reset if it's a new month
+            
+            return jsonify({
+                'success': True,
+                'dailyCount': daily_count,
+                'monthlyCount': monthly_count,
+                'dailyLimit': DAILY_LIMIT,
+                'monthlyLimit': MONTHLY_LIMIT,
+                'limitReached': daily_count >= DAILY_LIMIT
+            })
+        else:
+            # User hasn't used the service yet
+            return jsonify({
+                'success': True,
+                'dailyCount': 0,
+                'monthlyCount': 0,
+                'dailyLimit': DAILY_LIMIT,
+                'monthlyLimit': MONTHLY_LIMIT,
+                'limitReached': False
+            })
+    
+    except Exception as e:
+        print(f'Error fetching usage: {str(e)}')
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Failed to fetch usage',
+            'details': str(e)
+        }), 500
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'ok', 'message': 'Truth Quest Python API is running'})

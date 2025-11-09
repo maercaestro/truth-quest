@@ -25,20 +25,45 @@ function App() {
   
   const { currentUser, logout, idToken } = useAuth()
 
-  // Load usage count from localStorage
+  // Fetch real usage count from backend
   useEffect(() => {
+    const fetchUsage = async () => {
+      if (!currentUser || !idToken) return
+      
+      try {
+        const response = await fetch(`${API_URL}/api/usage`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${idToken}`,
+            'Content-Type': 'application/json',
+          }
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setUsageCount(data.dailyCount)
+          setUsageLimitReached(data.limitReached)
+        } else {
+          console.error('Failed to fetch usage:', response.statusText)
+          // Fallback to 0 if fetch fails
+          setUsageCount(0)
+          setUsageLimitReached(false)
+        }
+      } catch (error) {
+        console.error('Error fetching usage:', error)
+        // Fallback to 0 if error
+        setUsageCount(0)
+        setUsageLimitReached(false)
+      }
+    }
+    
     if (currentUser) {
-      const today = new Date().toDateString()
-      const storageKey = `usage_${currentUser.uid}_${today}`
-      const stored = localStorage.getItem(storageKey)
-      const count = stored ? parseInt(stored, 10) : 0
-      setUsageCount(count)
-      setUsageLimitReached(count >= USAGE_LIMITS.DAILY_LIMIT)
+      fetchUsage()
     } else {
       setUsageCount(0)
       setUsageLimitReached(false)
     }
-  }, [currentUser])
+  }, [currentUser, idToken])
 
   // Generate a random icon based on user ID for consistency
   const userIcon = useMemo(() => {
@@ -158,13 +183,27 @@ function App() {
 
       setResult(data)
       
-      // Increment usage count in localStorage
-      const today = new Date().toDateString()
-      const storageKey = `usage_${currentUser.uid}_${today}`
-      const newCount = usageCount + 1
-      localStorage.setItem(storageKey, newCount.toString())
-      setUsageCount(newCount)
-      setUsageLimitReached(newCount >= USAGE_LIMITS.DAILY_LIMIT)
+      // Fetch updated usage count from backend after successful analysis
+      try {
+        const usageResponse = await fetch(`${API_URL}/api/usage`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${freshToken}`,
+            'Content-Type': 'application/json',
+          }
+        })
+        
+        if (usageResponse.ok) {
+          const usageData = await usageResponse.json()
+          setUsageCount(usageData.dailyCount)
+          setUsageLimitReached(usageData.limitReached)
+        }
+      } catch (usageError) {
+        console.error('Error fetching updated usage:', usageError)
+        // Optimistic update if fetch fails
+        setUsageCount(prev => prev + 1)
+        setUsageLimitReached(usageCount + 1 >= USAGE_LIMITS.DAILY_LIMIT)
+      }
       
     } catch (err) {
       setError(err.message)
