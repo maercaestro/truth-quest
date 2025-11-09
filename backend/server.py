@@ -1185,26 +1185,37 @@ def analyze_video():
         print(f'ANALYZING VIDEO: {video_id} (Mode: {check_mode})')
         print(f'{"="*60}')
         
-        # Step 2: Get transcript (3-tier system: youtube-transcript-api → yt-dlp → Whisper)
+        # Step 2: Get transcript (4-tier system: YouTube Data API → youtube-transcript-api → yt-dlp → Whisper)
         print('\n[1/5] Fetching transcript...')
         transcript = None
         transcript_method = None
         
-        # METHOD 1: Try youtube-transcript-api (most reliable, no bot detection)
-        try:
-            print('Trying youtube-transcript-api...')
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-            # Combine all text segments
-            full_text = ' '.join([entry['text'] for entry in transcript_list])
-            transcript = {'full': full_text}
-            transcript_method = 'youtube-transcript-api'
-            print(f'✓ Transcript fetched via youtube-transcript-api ({len(full_text)} chars)')
-        except (TranscriptsDisabled, NoTranscriptFound) as e:
-            print(f'✗ youtube-transcript-api failed: {str(e)}')
-        except Exception as e:
-            print(f'✗ youtube-transcript-api error: {str(e)}')
+        # METHOD 1: Try YouTube Data API v3 (official, most reliable)
+        if youtube_api:
+            try:
+                print('Trying YouTube Data API v3...')
+                transcript = fetch_transcript_youtube_api(video_id)
+                transcript_method = 'YouTube Data API v3'
+                print(f'✓ Transcript fetched via YouTube Data API v3 ({len(transcript["full"])} chars)')
+            except Exception as e:
+                print(f'✗ YouTube Data API v3 failed: {str(e)}')
         
-        # METHOD 2: Try yt-dlp
+        # METHOD 2: Try youtube-transcript-api (no bot detection)
+        if not transcript:
+            try:
+                print('Trying youtube-transcript-api...')
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+                # Combine all text segments
+                full_text = ' '.join([entry['text'] for entry in transcript_list])
+                transcript = {'full': full_text}
+                transcript_method = 'youtube-transcript-api'
+                print(f'✓ Transcript fetched via youtube-transcript-api ({len(full_text)} chars)')
+            except (TranscriptsDisabled, NoTranscriptFound) as e:
+                print(f'✗ youtube-transcript-api failed: {str(e)}')
+            except Exception as e:
+                print(f'✗ youtube-transcript-api error: {str(e)}')
+        
+        # METHOD 3: Try yt-dlp
         if not transcript:
             try:
                 print('Trying yt-dlp...')
@@ -1214,7 +1225,7 @@ def analyze_video():
             except Exception as e:
                 print(f'✗ yt-dlp failed: {str(e)}')
         
-        # METHOD 3: Fall back to Whisper if both failed
+        # METHOD 4: Fall back to Whisper if all three failed
         if not transcript and openai_client:
             try:
                 print('Trying OpenAI Whisper...')
