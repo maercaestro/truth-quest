@@ -38,12 +38,26 @@ CORS(app, resources={
 
 # Initialize Firebase Admin SDK
 try:
-    firebase_admin.initialize_app()
-    db = firestore.client()
-    print("Firebase Admin SDK initialized successfully")
+    # Check for service account key file
+    cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS', './serviceAccountKey.json')
+    print(f"🔑 Loading Firebase credentials from: {cred_path}")
+    
+    if not os.path.exists(cred_path):
+        print(f"❌ ERROR: Firebase service account key not found at: {cred_path}")
+        print("Please upload serviceAccountKey.json to the backend directory")
+        cred = None
+        db = None
+    else:
+        # Initialize with credentials
+        cred = credentials.Certificate(cred_path)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("✅ Firebase Admin SDK initialized successfully")
+        print(f"✅ Project ID: {cred.project_id}")
 except Exception as e:
-    print(f"Firebase Admin SDK initialization error: {e}")
-    print("Make sure GOOGLE_APPLICATION_CREDENTIALS environment variable is set")
+    print(f"❌ Firebase Admin SDK initialization error: {e}")
+    import traceback
+    traceback.print_exc()
     db = None
 
 # YouTube API configuration
