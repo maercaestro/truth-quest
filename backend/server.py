@@ -1451,6 +1451,23 @@ Return ONLY facts that can be verified through web search. Ignore opinions and p
         
         import json
         all_facts = json.loads(response.choices[0].message.content).get('facts', [])
+        
+        # Validate that all_facts contains dictionaries, not strings
+        validated_facts = []
+        for fact in all_facts:
+            if isinstance(fact, dict):
+                validated_facts.append(fact)
+            elif isinstance(fact, str):
+                # If it's a string, convert it to a dict format
+                validated_facts.append({
+                    'claim': fact,
+                    'category': 'General',
+                    'entities': []
+                })
+            else:
+                print(f'Warning: Skipping invalid fact format: {type(fact)}')
+        
+        all_facts = validated_facts
         print(f'✓ Extracted {len(all_facts)} total facts')
         
         # Step 3.5: Extract and verify central thesis
@@ -1564,17 +1581,34 @@ Verdict (supported/refuted/partially_true):"""
         
         for i, fact in enumerate(sampled_facts, 1):
             try:
-                print(f'  Verifying fact {i}/{len(sampled_facts)}: {fact["claim"][:60]}...')
+                # Ensure fact is a dictionary
+                if not isinstance(fact, dict):
+                    print(f'  ⚠ Skipping invalid fact format at index {i}: {type(fact)}')
+                    continue
+                
+                # Get claim with fallback
+                claim = fact.get('claim', str(fact))
+                if not claim:
+                    print(f'  ⚠ Skipping fact {i} - no claim found')
+                    continue
+                
+                print(f'  Verifying fact {i}/{len(sampled_facts)}: {claim[:60]}...')
                 
                 # Search with Brave
-                search_query = f'{fact["claim"][:200]} {" ".join(fact["entities"][:3])}'
+                entities = fact.get('entities', [])
+                if isinstance(entities, list):
+                    entities_str = ' '.join(str(e) for e in entities[:3])
+                else:
+                    entities_str = ''
+                
+                search_query = f'{claim[:200]} {entities_str}'
                 search_results = search_brave(search_query, count=3)
                 
                 web_results = search_results.get('web', {}).get('results', [])[:2]
                 sources = [{'title': r.get('title', '')[:150], 'url': r.get('url', '')} for r in web_results]
                 
                 # Analyze with GPT
-                analysis_prompt = f"""Claim: "{fact['claim']}"
+                analysis_prompt = f"""Claim: "{claim}"
 
 Search Results:
 {chr(10).join([f"- {s['title']}" for s in sources])}
