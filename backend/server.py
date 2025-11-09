@@ -156,19 +156,26 @@ def verify_token(f):
     def decorated_function(*args, **kwargs):
         # Get token from Authorization header
         auth_header = request.headers.get('Authorization', '')
+        print(f"🔑 Auth header received: {auth_header[:50]}..." if auth_header else "🔑 No auth header")
+        
         if not auth_header.startswith('Bearer '):
+            print("❌ Missing or invalid authorization header format")
             return jsonify({'error': 'Missing or invalid authorization header'}), 401
         
         id_token = auth_header.split('Bearer ')[1]
+        print(f"🎫 Token extracted (length: {len(id_token)})")
         
         try:
             # Verify the token
+            print("🔍 Verifying token with Firebase Admin SDK...")
             decoded_token = auth.verify_id_token(id_token)
             user_uid = decoded_token['uid']
+            print(f"✅ Token verified successfully for user: {user_uid}")
             
             # Check usage limits
             allowed, error_message = check_usage_limits(user_uid)
             if not allowed:
+                print(f"⚠️ Usage limit exceeded for user: {user_uid}")
                 return jsonify({'error': error_message, 'limit_exceeded': True}), 429
             
             # Add user info to request
@@ -177,10 +184,13 @@ def verify_token(f):
                 'email': decoded_token.get('email'),
                 'email_verified': decoded_token.get('email_verified', False)
             }
+            print(f"👤 Request authenticated for: {request.user.get('email')}")
             
             return f(*args, **kwargs)
         except Exception as e:
-            print(f"Token verification error: {e}")
+            print(f"❌ Token verification error: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return jsonify({'error': 'Invalid or expired token', 'details': str(e)}), 401
     
     return decorated_function
